@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Head Tracker</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #1a1a2e;
+            color: #eee;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            overflow: hidden;
+            height: 100vh;
+        }
+        #canvas-container {
+            width: 100%;
+            height: 100%;
+            position: relative;
+        }
+        canvas { display: block; }
+
+        #controls {
+            position: absolute;
+            top: 16px;
+            right: 16px;
+            z-index: 5;
+            display: none;
+            flex-direction: column;
+            gap: 8px;
+            background: rgba(0,0,0,0.6);
+            padding: 16px;
+            border-radius: 12px;
+            min-width: 240px;
+        }
+        #controls.visible { display: flex; }
+        #controls label { font-size: 13px; color: #aaa; }
+        #controls select, #controls input[type=range] {
+            width: 100%;
+            padding: 4px;
+            background: #2a2a4a;
+            color: #eee;
+            border: 1px solid #4a4a6a;
+            border-radius: 6px;
+        }
+        #controls input[type=range] { padding: 0; }
+
+        #info-bar {
+            position: absolute;
+            bottom: 16px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 5;
+            background: rgba(0,0,0,0.6);
+            padding: 8px 20px;
+            border-radius: 8px;
+            font-size: 13px;
+            color: #888;
+            display: none;
+        }
+        #info-bar.visible { display: block; }
+
+        .btn {
+            background: #4a4a8a;
+            color: #eee;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        .btn:hover { background: #6a6aaa; }
+    </style>
+</head>
+<body>
+    <div id="canvas-container">
+        <div id="controls">
+            <label>Скорость слежения: <span id="speed-val">0.05</span></label>
+            <input type="range" id="speed-range" min="0.01" max="0.3" step="0.01" value="0.05">
+
+            <label>Макс. поворот (°): <span id="angle-val">45</span></label>
+            <input type="range" id="angle-range" min="10" max="90" step="5" value="45">
+
+        </div>
+
+        <div id="info-bar">Двигай мышкой — голова будет следить за курсором</div>
+    </div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/"
+        }
+    }
+    </script>
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // --- Scene setup ---
+        const container = document.getElementById('canvas-container');
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.2;
+        container.appendChild(renderer.domElement);
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a1a2e);
+
+        const aspect = window.innerWidth / window.innerHeight;
+        const frustumSize = 3;
+        const camera = new THREE.OrthographicCamera(
+            frustumSize * aspect / -2, frustumSize * aspect / 2,
+            frustumSize / 2, frustumSize / -2,
+            0.1, 100
+        );
+        camera.position.set(0, 1.2, 3);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.target.set(0, 1, 0);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.08;
+        controls.update();
+
+        // Lighting
+        const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambient);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+        dirLight.position.set(3, 5, 4);
+        scene.add(dirLight);
+        const fillLight = new THREE.DirectionalLight(0x8888ff, 0.4);
+        fillLight.position.set(-3, 2, -2);
+        scene.add(fillLight);
+
+        // Ground grid
+        const grid = new THREE.GridHelper(10, 20, 0x333355, 0x222244);
+        scene.add(grid);
+
+        // --- State ---
+        let headBone = null;
+        let allBones = [];
+        let mixer = null;
+        let currentModel = null;
+        const mouse = new THREE.Vector2(0, 0);
+        let lerpSpeed = 0.05;
+        let maxAngle = THREE.MathUtils.degToRad(45);
+        let headInitialQuat = new THREE.Quaternion();
+
+        // Common head bone names
+        const HEAD_BONE_NAMES = [
+            'head', 'Head', 'HEAD',
+            'mixamorig:Head', 'mixamorig:head',
+            'Bip001 Head', 'Bip01_Head',
+            'head_bone', 'HeadBone',
+            'DEF-spine.006', // Rigify
+            'spine.006',
+            'head.x', 'Head.x',
+            'Голова', 'голова',
+        ];
+
+        // --- UI Elements ---
+        const controlsPanel = document.getElementById('controls');
+        const speedRange = document.getElementById('speed-range');
+        const angleRange = document.getElementById('angle-range');
+        const infoBar = document.getElementById('info-bar');
+
+        // --- Controls ---
+        speedRange.addEventListener('input', (e) => {
+            lerpSpeed = parseFloat(e.target.value);
+            document.getElementById('speed-val').textContent = lerpSpeed.toFixed(2);
+        });
+        angleRange.addEventListener('input', (e) => {
+            maxAngle = THREE.MathUtils.degToRad(parseInt(e.target.value));
+            document.getElementById('angle-val').textContent = e.target.value;
+        });
+        // --- Mouse tracking ---
+        window.addEventListener('mousemove', (e) => {
+            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+        });
+
+        // --- Model loading ---
+        function loadModel(url) {
+            const loader = new GLTFLoader();
+
+            loader.load(url, (gltf) => {
+                const model = gltf.scene;
+                currentModel = model;
+
+                // Auto-detect scale and center
+                const box = new THREE.Box3().setFromObject(model);
+                const size = box.getSize(new THREE.Vector3());
+                const maxDim = Math.max(size.x, size.y, size.z);
+                if (maxDim > 10) {
+                    const scale = 2 / maxDim;
+                    model.scale.setScalar(scale);
+                    box.setFromObject(model);
+                }
+                model.position.y -= box.min.y; // Place on ground
+                model.scale.multiplyScalar(1.5); // Make model larger
+
+                scene.add(model);
+
+                // Adjust camera
+                const newBox = new THREE.Box3().setFromObject(model);
+                const newSize = newBox.getSize(new THREE.Vector3());
+                const newCenter = newBox.getCenter(new THREE.Vector3());
+                camera.position.set(0, newCenter.y, newSize.y * 2.5);
+                controls.target.copy(newCenter);
+                controls.update();
+
+                // Setup animations if any
+                if (gltf.animations.length > 0) {
+                    mixer = new THREE.AnimationMixer(model);
+                    const idleClip = gltf.animations.find(c =>
+                        /idle|stand|rest|pose/i.test(c.name)
+                    ) || gltf.animations[0];
+                    mixer.clipAction(idleClip).play();
+                }
+
+                // Find bones
+                allBones = [];
+                model.traverse((child) => {
+                    if (child.isBone) allBones.push(child);
+                });
+
+                // Auto-select head bone
+                let foundBone = null;
+                for (const name of HEAD_BONE_NAMES) {
+                    foundBone = allBones.find(b => b.name === name);
+                    if (foundBone) break;
+                }
+                if (!foundBone) {
+                    foundBone = allBones.find(b => /head/i.test(b.name));
+                }
+                if (foundBone) {
+                    selectBone(foundBone.name);
+                } else if (allBones.length > 0) {
+                    selectBone(allBones[0].name);
+                }
+
+                // Show UI
+                controlsPanel.classList.add('visible');
+                infoBar.classList.add('visible');
+            }, undefined, (error) => {
+                console.error('Error loading model:', error);
+            });
+        }
+
+        // Auto-load model
+        loadModel('./head.glb');
+
+        function selectBone(boneName) {
+            headBone = allBones.find(b => b.name === boneName) || null;
+            if (headBone) {
+                headInitialQuat.copy(headBone.quaternion);
+            }
+        }
+
+        // --- Animation loop ---
+        const clock = new THREE.Clock();
+        const targetQuat = new THREE.Quaternion();
+        const euler = new THREE.Euler();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const delta = clock.getDelta();
+            if (mixer) mixer.update(delta);
+
+            if (headBone) {
+                // Calculate target rotation based on mouse position
+                const yRot = mouse.x * maxAngle;        // cursor left-right → Y axis
+                const zRot = -mouse.y * maxAngle * 0.6; // cursor up-down → Z axis
+
+                euler.set(0, yRot, zRot, 'YZX');
+                targetQuat.copy(headInitialQuat).multiply(
+                    new THREE.Quaternion().setFromEuler(euler)
+                );
+
+                // Smooth interpolation
+                headBone.quaternion.slerp(targetQuat, lerpSpeed);
+            }
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // --- Resize ---
+        window.addEventListener('resize', () => {
+            const a = window.innerWidth / window.innerHeight;
+            camera.left = frustumSize * a / -2;
+            camera.right = frustumSize * a / 2;
+            camera.top = frustumSize / 2;
+            camera.bottom = frustumSize / -2;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
