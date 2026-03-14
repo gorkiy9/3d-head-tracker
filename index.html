@@ -93,7 +93,12 @@
         @media (max-width: 768px) {
             #info-bar {
                 bottom: auto;
-                top: 16px;
+                top: 0;
+                left: 0;
+                right: 0;
+                transform: none;
+                border-radius: 0;
+                text-align: center;
             }
             #controls {
                 top: auto;
@@ -203,6 +208,11 @@
         const speedRange = document.getElementById('speed-range');
         const angleRange = document.getElementById('angle-range');
         const infoBar = document.getElementById('info-bar');
+
+        // --- Mobile info text ---
+        if (window.matchMedia('(max-width: 768px)').matches) {
+            infoBar.textContent = 'Свайпай — я буду следить';
+        }
 
         // --- Settings toggle (mobile) ---
         const settingsToggle = document.getElementById('settings-toggle');
