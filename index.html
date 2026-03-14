@@ -70,6 +70,40 @@
             font-size: 13px;
         }
         .btn:hover { background: #6a6aaa; }
+
+        #settings-toggle {
+            display: none;
+            position: absolute;
+            bottom: 80px;
+            right: 16px;
+            z-index: 6;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            background: rgba(0,0,0,0.6);
+            border: 1px solid #4a4a6a;
+            color: #aaa;
+            font-size: 20px;
+            cursor: pointer;
+            align-items: center;
+            justify-content: center;
+        }
+        #settings-toggle:hover { background: rgba(0,0,0,0.8); }
+
+        @media (max-width: 768px) {
+            #info-bar {
+                bottom: auto;
+                top: 16px;
+            }
+            #controls {
+                top: auto;
+                bottom: 80px;
+                right: 16px;
+            }
+            #controls.visible { display: none; }
+            #controls.visible.open { display: flex; }
+            #settings-toggle { display: flex; }
+        }
     </style>
 </head>
 <body>
@@ -83,6 +117,7 @@
 
         </div>
 
+        <button id="settings-toggle">&#9881;</button>
         <div id="info-bar">Двигай мышкой или свайпай — голова будет следить</div>
     </div>
 
@@ -168,6 +203,12 @@
         const speedRange = document.getElementById('speed-range');
         const angleRange = document.getElementById('angle-range');
         const infoBar = document.getElementById('info-bar');
+
+        // --- Settings toggle (mobile) ---
+        const settingsToggle = document.getElementById('settings-toggle');
+        settingsToggle.addEventListener('click', () => {
+            controlsPanel.classList.toggle('open');
+        });
 
         // --- Controls ---
         speedRange.addEventListener('input', (e) => {
