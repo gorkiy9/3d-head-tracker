@@ -83,7 +83,7 @@
 
         </div>
 
-        <div id="info-bar">Двигай мышкой — голова будет следить за курсором</div>
+        <div id="info-bar">Двигай мышкой или свайпай — голова будет следить</div>
     </div>
 
     <script type="importmap">
@@ -183,6 +183,18 @@
             mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
             mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
         });
+
+        // --- Touch tracking ---
+        window.addEventListener('touchstart', (e) => {
+            const t = e.touches[0];
+            mouse.x = (t.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(t.clientY / window.innerHeight) * 2 + 1;
+        }, { passive: true });
+        window.addEventListener('touchmove', (e) => {
+            const t = e.touches[0];
+            mouse.x = (t.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(t.clientY / window.innerHeight) * 2 + 1;
+        }, { passive: true });
 
         // --- Model loading ---
         function loadModel(url) {
